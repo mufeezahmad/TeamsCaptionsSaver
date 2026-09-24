@@ -1,0 +1,27 @@
+# Build output
+bin/
+obj/
+publish/
+artifacts/
+TestResults/
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local runtime files (the app writes these to %LOCALAPPDATA%, but just in case)
+*.log
+teams-ui-dump-*.txt
+
+# Claude Code
+.claude/
+CLAUDE.md
