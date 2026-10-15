@@ -4,7 +4,7 @@ namespace TeamsCaptionsSaver.Desktop.Capture;
 
 /// <summary>
 /// Turns a snapshot of the Teams live-captions region into (speaker, text) pairs.
-/// In the browser each caption is a <c>.fui-ChatMessageCompact</c> element. The Teams desktop client's
+/// Teams renders each caption as a <c>.fui-ChatMessageCompact</c> element, but the desktop client's
 /// accessibility tree drops that wrapper and only exposes its <c>fui-ChatMessageCompact__body</c>,
 /// which holds two text elements: the speaker's name, then the caption text.
 /// </summary>

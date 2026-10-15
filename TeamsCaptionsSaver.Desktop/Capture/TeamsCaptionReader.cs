@@ -16,7 +16,7 @@ public sealed record CaptureSnapshot(
 /// <summary>
 /// Reads live captions from the Microsoft Teams desktop client (new Teams, ms-teams.exe) through
 /// Windows UI Automation. Teams renders its UI in WebView2, which exposes the page's accessibility
-/// tree to UIA - so we can see the same caption elements the browser extension reads from the DOM,
+/// tree to UIA - so we can see the caption elements of the Teams page,
 /// including the real speaker names Teams attaches to each caption.
 /// </summary>
 public sealed class TeamsCaptionReader : IDisposable
@@ -266,7 +266,7 @@ public sealed class TeamsCaptionReader : IDisposable
 
     /// <summary>
     /// Finds the element that holds the caption items. Prefers an ancestor whose name/id/class
-    /// mentions "caption" (the extension matches data-tid='closed-caption-...'); otherwise, while
+    /// mentions "caption" (in current Teams, the "Live Captions" panel); otherwise, while
     /// in a meeting, falls back to the lowest common ancestor of the caption items.
     /// </summary>
     internal static SourceNode? FindCaptionsContainer(UiNode tree, bool inMeeting)

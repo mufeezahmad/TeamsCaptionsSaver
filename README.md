@@ -19,8 +19,8 @@ Teams can show live captions during a meeting, but they disappear as soon as the
 name of the person speaking, and saves the whole conversation as a transcript you can search, share
 or paste into an AI tool for a summary.
 
-You don't need a browser extension, a bot in the meeting, an admin to enable recording, or a cloud
-service. Everything stays on your PC.
+You don't need a bot in the meeting, an admin to enable recording, or a cloud service. Everything
+stays on your PC.
 
 ## Features
 
@@ -133,8 +133,7 @@ The dump contains whatever is on screen in Teams (names, chat), so check it befo
 <summary><b>Which versions of Teams are supported?</b></summary>
 
 Only the **new** Teams desktop app (`ms-teams.exe`). Classic Teams and Teams in a browser are not
-supported. For Teams on the web, use the
-[MS Teams Live Captions Saver](https://github.com/Zerg00s/Live-Captions-Saver) browser extension.
+supported.
 </details>
 
 <details>
@@ -166,13 +165,6 @@ TeamsCaptionsSaver.Tests/         Unit tests for parsing, merging and exports
 Live captions can contain sensitive conversation. Transcripts are stored only on your PC, in the folder
 you choose. The app never sends anything over the network. Follow your organisation's policies, and
 tell the other participants when you're saving a meeting transcript.
-
-## Credits
-
-Inspired by the [MS Teams Live Captions Saver](https://github.com/Zerg00s/Live-Captions-Saver) browser
-extension by Denis Molodtsov (MIT), which also supplied the app icon. It showed which Teams elements
-hold the captions. This project brings the same idea to the Teams desktop app using Windows UI
-Automation.
 
 ## License
 
