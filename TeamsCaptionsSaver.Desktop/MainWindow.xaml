@@ -3,9 +3,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Teams Captions Saver" Height="640" Width="900" MinHeight="400" MinWidth="620"
         Icon="icon.ico" WindowStartupLocation="CenterScreen"
-        Closing="OnClosing">
+        Closing="OnClosing" PreviewKeyDown="OnWindowKeyDown">
     <Grid Margin="12">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -38,8 +39,42 @@
                     ToolTip="Dump the Teams UI tree to a file - useful if captions aren't being picked up." />
         </WrapPanel>
 
+        <!-- Filters: search and chosen speakers. Copy and Save use what's shown. -->
+        <DockPanel Grid.Row="2" Margin="0,0,0,8">
+            <Grid Width="280" DockPanel.Dock="Left">
+                <TextBox x:Name="SearchBox" Padding="24,4,6,4" VerticalContentAlignment="Center"
+                         TextChanged="OnSearchChanged" PreviewKeyDown="OnSearchKeyDown"
+                         ToolTip="Show only turns containing this text (Ctrl+F). Esc clears it." />
+                <TextBlock Text="🔍" Margin="7,0,0,0" VerticalAlignment="Center" Foreground="#888" IsHitTestVisible="False" />
+                <TextBlock x:Name="SearchHint" Text="Search transcript (Ctrl+F)" Margin="26,0,0,0"
+                           VerticalAlignment="Center" Foreground="#999" IsHitTestVisible="False" />
+            </Grid>
+            <ToggleButton x:Name="SpeakersButton" Content="Speakers ▾" Margin="8,0,0,0" Padding="10,4"
+                          Checked="OnSpeakersPopupOpening" ToolTip="Choose which speakers to show" />
+            <Popup x:Name="SpeakersPopup" PlacementTarget="{Binding ElementName=SpeakersButton}" Placement="Bottom"
+                   StaysOpen="False" AllowsTransparency="True"
+                   IsOpen="{Binding IsChecked, ElementName=SpeakersButton, Mode=TwoWay}">
+                <Border Background="White" BorderBrush="#D1D5DB" BorderThickness="1" CornerRadius="6"
+                        Padding="10" MinWidth="230" Margin="0,4,0,0">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <Button Content="All" MinWidth="50" Padding="8,2" Click="OnShowAllSpeakersClick" />
+                            <Button Content="None" MinWidth="50" Padding="8,2" Click="OnHideAllSpeakersClick" />
+                        </StackPanel>
+                        <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="SpeakerList" />
+                        </ScrollViewer>
+                    </StackPanel>
+                </Border>
+            </Popup>
+            <Button x:Name="ClearFilterButton" Content="Clear filters" Margin="8,0,0,0" Visibility="Collapsed"
+                    Click="OnClearFiltersClick" />
+            <TextBlock x:Name="FilterStatus" VerticalAlignment="Center" Margin="6,0,0,0" Foreground="#555"
+                       TextTrimming="CharacterEllipsis" />
+        </DockPanel>
+
         <!-- Transcript -->
-        <DataGrid Grid.Row="2" x:Name="TranscriptGrid" AutoGenerateColumns="False" IsReadOnly="True"
+        <DataGrid Grid.Row="3" x:Name="TranscriptGrid" AutoGenerateColumns="False" IsReadOnly="True"
                   HeadersVisibility="Column" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#E5E7EB"
                   SelectionMode="Extended" CanUserSortColumns="False" RowHeaderWidth="0"
                   VirtualizingPanel.ScrollUnit="Pixel" BorderBrush="#D1D5DB">
@@ -64,6 +99,9 @@
             </DataGrid.Columns>
             <DataGrid.ContextMenu>
                 <ContextMenu>
+                    <MenuItem Header="Show only this speaker" Click="OnShowOnlySpeakerClick" />
+                    <MenuItem Header="Show all speakers" Click="OnShowAllSpeakersClick" />
+                    <Separator />
                     <MenuItem Header="Rename speaker…" Click="OnRenameSpeakerClick" />
                     <MenuItem Header="Copy selected" Click="OnCopyClick" />
                 </ContextMenu>
@@ -71,7 +109,7 @@
         </DataGrid>
 
         <!-- Settings -->
-        <Expander Grid.Row="3" Header="Settings" Margin="0,10,0,0">
+        <Expander Grid.Row="4" Header="Settings" Margin="0,10,0,0">
             <Grid Margin="4,8,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -110,6 +148,6 @@
             </Grid>
         </Expander>
 
-        <TextBlock Grid.Row="4" x:Name="LogLine" Foreground="#888" Margin="0,8,0,0" TextTrimming="CharacterEllipsis" />
+        <TextBlock Grid.Row="5" x:Name="LogLine" Foreground="#888" Margin="0,8,0,0" TextTrimming="CharacterEllipsis" />
     </Grid>
 </Window>

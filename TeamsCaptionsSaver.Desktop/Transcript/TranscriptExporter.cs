@@ -6,6 +6,10 @@ using TeamsCaptionsSaver.Desktop.Models;
 
 namespace TeamsCaptionsSaver.Desktop.Transcript;
 
+/// <summary>
+/// Writes a transcript in each supported format. Every method takes an optional list of turns, so the
+/// window can export just what its filters show; by default the whole session is exported.
+/// </summary>
 public static class TranscriptExporter
 {
     public static readonly (string Ext, string Label)[] Formats =
@@ -37,50 +41,64 @@ public static class TranscriptExporter
         return name.Length == 0 ? "Teams Transcript" : name.Length > 150 ? name[..150] : name;
     }
 
-    /// <summary>Writes the transcript in each format to <paramref name="folder"/>; returns the paths.</summary>
-    public static List<string> SaveAll(TranscriptSession session, string folder, string pattern, IEnumerable<string> formats)
+    /// <summary>True when <paramref name="turns"/> leaves out some of the session's turns.</summary>
+    public static bool IsFiltered(TranscriptSession s, IReadOnlyList<SpeakerTurn>? turns) =>
+        turns != null && turns.Count != s.Turns.Count;
+
+    /// <summary>
+    /// Writes the transcript in each format to <paramref name="folder"/>; returns the paths.
+    /// A filtered subset gets a "_filtered" suffix so it never overwrites the full transcript.
+    /// </summary>
+    public static List<string> SaveAll(TranscriptSession session, string folder, string pattern, IEnumerable<string> formats,
+        IReadOnlyList<SpeakerTurn>? turns = null)
     {
         Directory.CreateDirectory(folder);
-        var baseName = BuildFileName(pattern, session);
+        var baseName = BuildFileName(pattern, session) + (IsFiltered(session, turns) ? "_filtered" : "");
         var paths = new List<string>();
         foreach (var ext in formats.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var path = Path.Combine(folder, $"{baseName}.{ext}");
-            Save(session, path, ext);
+            Save(session, path, ext, turns);
             paths.Add(path);
         }
         return paths;
     }
 
-    public static void Save(TranscriptSession session, string path, string? format = null)
+    public static void Save(TranscriptSession session, string path, string? format = null,
+        IReadOnlyList<SpeakerTurn>? turns = null)
     {
         format ??= Path.GetExtension(path).TrimStart('.');
         var content = format.ToLowerInvariant() switch
         {
-            "md" => ToMarkdown(session),
-            "json" => ToJson(session),
-            "csv" => ToCsv(session),
-            "vtt" => ToVtt(session),
-            _ => ToText(session),
+            "md" => ToMarkdown(session, turns),
+            "json" => ToJson(session, turns),
+            "csv" => ToCsv(session, turns),
+            "vtt" => ToVtt(session, turns),
+            _ => ToText(session, turns),
         };
         // UTF-8 with BOM so Excel and Notepad pick the right encoding for non-English names.
         File.WriteAllText(path, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
     }
 
-    private static string Header(TranscriptSession s, string prefix = "")
+    private static IEnumerable<string> SpeakersOf(IEnumerable<SpeakerTurn> turns) =>
+        turns.Select(t => t.Speaker).Distinct();
+
+    private static string Header(TranscriptSession s, IReadOnlyList<SpeakerTurn> turns)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"{prefix}Meeting: {s.Title}");
-        sb.AppendLine($"{prefix}Date: {s.StartedAt:dddd, MMMM d, yyyy}");
-        sb.AppendLine($"{prefix}Time: {s.StartedAt:HH:mm}{(s.EndedAt is { } end ? $" - {end:HH:mm}" : "")}");
-        sb.AppendLine($"{prefix}Speakers: {string.Join(", ", s.Speakers)}");
+        sb.AppendLine($"Meeting: {s.Title}");
+        sb.AppendLine($"Date: {s.StartedAt:dddd, MMMM d, yyyy}");
+        sb.AppendLine($"Time: {s.StartedAt:HH:mm}{(s.EndedAt is { } end ? $" - {end:HH:mm}" : "")}");
+        sb.AppendLine($"Speakers: {string.Join(", ", SpeakersOf(turns))}");
+        if (IsFiltered(s, turns)) sb.AppendLine($"Filtered: {turns.Count} of {s.Turns.Count} turns");
         return sb.ToString();
     }
 
-    public static string ToText(TranscriptSession s)
+    public static string ToText(TranscriptSession s, IReadOnlyList<SpeakerTurn>? turns = null)
     {
-        var sb = new StringBuilder(Header(s));
-        foreach (var t in s.Turns)
+        turns ??= s.Turns;
+        var sb = new StringBuilder(Header(s, turns));
+        foreach (var t in turns)
             sb.AppendLine().AppendLine(FormatTurn(t));
         return sb.ToString();
     }
@@ -88,19 +106,21 @@ public static class TranscriptExporter
     /// <summary>One speaker turn as a plain-text line: "[17:50:50] Jonas: what they said".</summary>
     public static string FormatTurn(SpeakerTurn t) => $"[{t.TimeDisplay}] {t.Speaker}: {t.Text}";
 
-    public static string ToMarkdown(TranscriptSession s)
+    public static string ToMarkdown(TranscriptSession s, IReadOnlyList<SpeakerTurn>? turns = null)
     {
+        turns ??= s.Turns;
         var sb = new StringBuilder();
         sb.AppendLine($"# {s.Title}");
         sb.AppendLine();
         sb.AppendLine($"- **Date:** {s.StartedAt:dddd, MMMM d, yyyy}");
         sb.AppendLine($"- **Time:** {s.StartedAt:HH:mm}{(s.EndedAt is { } end ? $" – {end:HH:mm}" : "")}");
-        sb.AppendLine($"- **Speakers:** {string.Join(", ", s.Speakers)}");
+        sb.AppendLine($"- **Speakers:** {string.Join(", ", SpeakersOf(turns))}");
+        if (IsFiltered(s, turns)) sb.AppendLine($"- **Filtered:** {turns.Count} of {s.Turns.Count} turns");
         sb.AppendLine();
         sb.AppendLine("## Transcript");
         sb.AppendLine();
 
-        foreach (var t in s.Turns)
+        foreach (var t in turns)
         {
             sb.AppendLine($"**{t.Speaker}** _{t.TimeDisplay}_  ");
             sb.AppendLine(t.Text);
@@ -109,41 +129,46 @@ public static class TranscriptExporter
         return sb.ToString();
     }
 
-    public static string ToJson(TranscriptSession s) => JsonSerializer.Serialize(new
+    public static string ToJson(TranscriptSession s, IReadOnlyList<SpeakerTurn>? turns = null)
     {
-        title = s.Title,
-        startedAt = s.StartedAt,
-        endedAt = s.EndedAt,
-        speakers = s.Speakers.ToList(),
-        turns = s.Turns.Select(t => new
+        var shown = turns ?? s.Turns;
+        return JsonSerializer.Serialize(new
         {
-            speaker = t.Speaker,
-            originalSpeaker = t.RawSpeaker != t.Speaker ? t.RawSpeaker : null,
-            start = t.StartTime,
-            end = t.EndTime,
-            offsetSeconds = Math.Round((t.StartTime - s.StartedAt).TotalSeconds, 1),
-            text = t.Text,
-            // The individual caption blocks, for anyone who needs finer timing.
-            captions = t.Entries.Select(e => new { time = e.FirstSeen, text = e.Text }),
-        }),
-    }, JsonOptions);
+            title = s.Title,
+            startedAt = s.StartedAt,
+            endedAt = s.EndedAt,
+            speakers = SpeakersOf(shown).ToList(),
+            filtered = IsFiltered(s, turns) ? new { shownTurns = shown.Count, totalTurns = s.Turns.Count } : null,
+            turns = shown.Select(t => new
+            {
+                speaker = t.Speaker,
+                originalSpeaker = t.RawSpeaker != t.Speaker ? t.RawSpeaker : null,
+                start = t.StartTime,
+                end = t.EndTime,
+                offsetSeconds = Math.Round((t.StartTime - s.StartedAt).TotalSeconds, 1),
+                text = t.Text,
+                // The individual caption blocks, for anyone who needs finer timing.
+                captions = t.Entries.Select(e => new { time = e.FirstSeen, text = e.Text }),
+            }),
+        }, JsonOptions);
+    }
 
-    public static string ToCsv(TranscriptSession s)
+    public static string ToCsv(TranscriptSession s, IReadOnlyList<SpeakerTurn>? turns = null)
     {
         static string Q(string v) => "\"" + v.Replace("\"", "\"\"") + "\"";
         var sb = new StringBuilder("Start,End,Speaker,Text\r\n");
-        foreach (var t in s.Turns)
+        foreach (var t in turns ?? s.Turns)
             sb.Append(Q(t.StartTime.ToString("yyyy-MM-dd HH:mm:ss"))).Append(',')
               .Append(Q(t.EndTime.ToString("yyyy-MM-dd HH:mm:ss"))).Append(',')
               .Append(Q(t.Speaker)).Append(',').Append(Q(t.Text)).Append("\r\n");
         return sb.ToString();
     }
 
-    public static string ToVtt(TranscriptSession s)
+    public static string ToVtt(TranscriptSession s, IReadOnlyList<SpeakerTurn>? turns = null)
     {
         static string Ts(TimeSpan t) => $"{(int)t.TotalHours:00}:{t.Minutes:00}:{t.Seconds:00}.{t.Milliseconds:000}";
         var sb = new StringBuilder("WEBVTT\n\n");
-        var entries = s.Entries.ToList();
+        var entries = turns == null ? s.Entries.ToList() : turns.SelectMany(t => t.Entries).ToList();
         for (int i = 0; i < entries.Count; i++)
         {
             var e = entries[i];

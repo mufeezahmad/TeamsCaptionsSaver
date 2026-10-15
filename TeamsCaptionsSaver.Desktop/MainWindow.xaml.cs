@@ -3,6 +3,8 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
@@ -22,8 +24,10 @@ public partial class MainWindow : Window
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly TeamsCaptionReader _reader = new();
     private readonly DispatcherTimer _backupTimer = new() { Interval = TimeSpan.FromSeconds(15) };
+    private readonly TranscriptFilter _filter = new();
 
     private TranscriptSession _session;
+    private ListCollectionView? _view;
     private bool _sessionEnded;
     private bool _paused;
     private bool _meetingActive;
@@ -48,6 +52,18 @@ public partial class MainWindow : Window
     {
         var session = new TranscriptSession(ResolveAlias);
         TranscriptGrid.ItemsSource = session.Turns;
+
+        _view = (ListCollectionView)CollectionViewSource.GetDefaultView(session.Turns);
+        _view.Filter = item => _filter.Matches((SpeakerTurn)item);
+        // Re-check a turn when its text grows or its speaker is renamed, not only when it's added.
+        _view.IsLiveFiltering = true;
+        _view.LiveFilteringProperties.Add(nameof(SpeakerTurn.Text));
+        _view.LiveFilteringProperties.Add(nameof(SpeakerTurn.Speaker));
+
+        // A new meeting has different speakers, so start unfiltered.
+        _filter.Clear();
+        SearchBox.Text = "";
+
         _sessionEnded = false;
         return session;
     }
@@ -100,9 +116,10 @@ public partial class MainWindow : Window
         _session.EndedAt = DateTime.Now;
         WriteBackup();
 
+        // Auto-save always writes the full transcript, whatever the filters show.
         if (_settings.AutoSaveOnMeetingEnd && _session.Entries.Count > 0 && _session.HasUnsavedChanges)
         {
-            var paths = SaveAll();
+            var paths = SaveAll(useFilter: false);
             if (paths != null) Log.Write($"Meeting ended - transcript auto-saved ({paths.Count} files).");
         }
     }
@@ -138,17 +155,21 @@ public partial class MainWindow : Window
 
         var speakers = _session.Speakers.Count();
         CountText.Text = $"{_session.Entries.Count} captions · {speakers} speaker{(speakers == 1 ? "" : "s")}";
+        UpdateFilterStatus();
     }
 
     // --- Saving -------------------------------------------------------------------------------
 
-    private List<string>? SaveAll()
+    /// <param name="useFilter">Save only the turns the filters show (manual saves), or everything (auto-save).</param>
+    private List<string>? SaveAll(bool useFilter)
     {
         try
         {
+            var turns = useFilter ? ShownTurns() : null;
             var paths = TranscriptExporter.SaveAll(_session, _settings.OutputFolder, _settings.FilenamePattern,
-                _settings.AutoSaveFormats.Count > 0 ? _settings.AutoSaveFormats : ["txt"]);
-            _session.HasUnsavedChanges = false;
+                _settings.AutoSaveFormats.Count > 0 ? _settings.AutoSaveFormats : ["txt"], turns);
+            // A filtered save leaves the rest unsaved, so keep warning about it on close.
+            if (!TranscriptExporter.IsFiltered(_session, turns)) _session.HasUnsavedChanges = false;
             Log.Write($"Saved: {string.Join(", ", paths.Select(Path.GetFileName))}");
             return paths;
         }
@@ -189,21 +210,23 @@ public partial class MainWindow : Window
     private void OnSaveAsClick(object sender, RoutedEventArgs e)
     {
         if (!EnsureHasEntries()) return;
+        var turns = ShownTurns();
+        bool filtered = TranscriptExporter.IsFiltered(_session, turns);
         Directory.CreateDirectory(_settings.OutputFolder);
         var dialog = new SaveFileDialog
         {
             Filter = TranscriptExporter.FileDialogFilter,
             InitialDirectory = _settings.OutputFolder,
-            FileName = TranscriptExporter.BuildFileName(_settings.FilenamePattern, _session),
+            FileName = TranscriptExporter.BuildFileName(_settings.FilenamePattern, _session) + (filtered ? "_filtered" : ""),
         };
         if (dialog.ShowDialog(this) != true) return;
         try
         {
             var ext = TranscriptExporter.Formats[Math.Max(0, dialog.FilterIndex - 1)].Ext;
             var path = Path.HasExtension(dialog.FileName) ? dialog.FileName : $"{dialog.FileName}.{ext}";
-            TranscriptExporter.Save(_session, path);
-            _session.HasUnsavedChanges = false;
-            Log.Write($"Saved: {path}");
+            TranscriptExporter.Save(_session, path, turns: turns);
+            if (!filtered) _session.HasUnsavedChanges = false;
+            Log.Write($"Saved{(filtered ? $" {turns!.Count} filtered turns" : "")}: {path}");
         }
         catch (Exception ex)
         {
@@ -214,13 +237,17 @@ public partial class MainWindow : Window
 
     private void OnSaveAllClick(object sender, RoutedEventArgs e)
     {
-        if (EnsureHasEntries()) SaveAll();
+        if (EnsureHasEntries()) SaveAll(useFilter: true);
     }
 
+    /// <summary>Checks there is something to copy or save, taking the filters into account.</summary>
     private bool EnsureHasEntries()
     {
-        if (_session.Entries.Count > 0) return true;
-        MessageBox.Show(this, "No captions have been captured yet.", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+        string? problem = _session.Entries.Count == 0 ? "No captions have been captured yet."
+            : ShownTurns() is { Count: 0 } ? "Nothing matches the current filters. Clear them to copy or save the transcript."
+            : null;
+        if (problem == null) return true;
+        MessageBox.Show(this, problem, Title, MessageBoxButton.OK, MessageBoxImage.Information);
         return false;
     }
 
@@ -279,12 +306,16 @@ public partial class MainWindow : Window
         var newName = RenameDialog.Ask(this, turn.RawSpeaker, turn.Speaker);
         if (newName == null) return;
 
-        if (newName.Length == 0 || newName == turn.RawSpeaker)
-            _settings.SpeakerAliases.Remove(turn.RawSpeaker);
+        var oldName = turn.Speaker;
+        var rawName = turn.RawSpeaker;
+        if (newName.Length == 0 || newName == rawName)
+            _settings.SpeakerAliases.Remove(rawName);
         else
-            _settings.SpeakerAliases[turn.RawSpeaker] = newName;
+            _settings.SpeakerAliases[rawName] = newName;
         _settings.Save();
         _session.ApplyAliases();
+        _filter.RenameSpeaker(oldName, ResolveAlias(rawName));
+        RefreshFilter();
     }
 
     private void OnCopyClick(object sender, RoutedEventArgs e)
@@ -298,8 +329,11 @@ public partial class MainWindow : Window
     private void OnCopyAllClick(object sender, RoutedEventArgs e)
     {
         if (!EnsureHasEntries()) return;
-        if (CopyToClipboard(TranscriptExporter.ToText(_session)))
-            Log.Write($"Copied the whole transcript ({_session.Turns.Count} turns) to the clipboard.");
+        var turns = ShownTurns();
+        if (CopyToClipboard(TranscriptExporter.ToText(_session, turns)))
+            Log.Write(TranscriptExporter.IsFiltered(_session, turns)
+                ? $"Copied {turns!.Count} of {_session.Turns.Count} turns (filtered) to the clipboard."
+                : $"Copied the whole transcript ({_session.Turns.Count} turns) to the clipboard.");
     }
 
     private bool CopyToClipboard(string text)
@@ -335,6 +369,123 @@ public partial class MainWindow : Window
             if (FindChild<T>(child) is { } found) return found;
         }
         return null;
+    }
+
+    // --- Filters ------------------------------------------------------------------------------
+
+    /// <summary>The turns the filters currently show, or null when nothing is filtered (= all turns).</summary>
+    private IReadOnlyList<SpeakerTurn>? ShownTurns() =>
+        _filter.IsActive && _view != null ? _view.Cast<SpeakerTurn>().ToList() : null;
+
+    private void RefreshFilter()
+    {
+        _view?.Refresh();
+        UpdateFilterStatus();
+    }
+
+    private void UpdateFilterStatus()
+    {
+        if (_session is null || _view is null) return;
+
+        var allSpeakers = _session.Speakers.ToList();
+        int visibleSpeakers = allSpeakers.Count(s => !_filter.HiddenSpeakers.Contains(s));
+        SpeakersButton.Content = _filter.HiddenSpeakers.Count > 0
+            ? $"Speakers ({visibleSpeakers}/{allSpeakers.Count}) ▾"
+            : "Speakers ▾";
+
+        ClearFilterButton.Visibility = _filter.IsActive ? Visibility.Visible : Visibility.Collapsed;
+        if (!_filter.IsActive)
+        {
+            FilterStatus.Text = "";
+            return;
+        }
+
+        int shown = _view.Count;
+        var parts = new List<string> { $"Showing {shown} of {_session.Turns.Count} turns" };
+        if (_filter.SearchText.Trim().Length > 0) parts.Add($"{shown} match{(shown == 1 ? "" : "es")}");
+        if (_filter.HiddenSpeakers.Count > 0) parts.Add($"{visibleSpeakers} of {allSpeakers.Count} speakers");
+        FilterStatus.Text = string.Join(" · ", parts) + " — Copy all and Save use what's shown";
+    }
+
+    private void OnWindowKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            SearchBox.Focus();
+            SearchBox.SelectAll();
+            e.Handled = true;
+        }
+    }
+
+    private void OnSearchChanged(object sender, TextChangedEventArgs e)
+    {
+        SearchHint.Visibility = SearchBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        _filter.SearchText = SearchBox.Text;
+        RefreshFilter();
+    }
+
+    private void OnSearchKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        SearchBox.Text = "";
+        e.Handled = true;
+    }
+
+    private void OnSpeakersPopupOpening(object sender, RoutedEventArgs e) => BuildSpeakerList();
+
+    private void BuildSpeakerList()
+    {
+        SpeakerList.Children.Clear();
+        var speakers = _session.Speakers.ToList();
+        if (speakers.Count == 0)
+        {
+            SpeakerList.Children.Add(new TextBlock { Text = "No speakers yet.", Foreground = Brushes.Gray });
+            return;
+        }
+        foreach (var speaker in speakers)
+        {
+            var box = new CheckBox
+            {
+                Content = speaker,
+                IsChecked = !_filter.HiddenSpeakers.Contains(speaker),
+                Margin = new Thickness(0, 3, 0, 3),
+            };
+            box.Click += (_, _) =>
+            {
+                if (box.IsChecked == true) _filter.HiddenSpeakers.Remove(speaker);
+                else _filter.HiddenSpeakers.Add(speaker);
+                RefreshFilter();
+            };
+            SpeakerList.Children.Add(box);
+        }
+    }
+
+    private void OnShowAllSpeakersClick(object sender, RoutedEventArgs e)
+    {
+        _filter.HiddenSpeakers.Clear();
+        BuildSpeakerList();
+        RefreshFilter();
+    }
+
+    private void OnHideAllSpeakersClick(object sender, RoutedEventArgs e)
+    {
+        foreach (var s in _session.Speakers) _filter.HiddenSpeakers.Add(s);
+        BuildSpeakerList();
+        RefreshFilter();
+    }
+
+    private void OnShowOnlySpeakerClick(object sender, RoutedEventArgs e)
+    {
+        if (TranscriptGrid.SelectedItem is not SpeakerTurn turn) return;
+        _filter.ShowOnly(turn.Speaker, _session.Speakers);
+        RefreshFilter();
+    }
+
+    private void OnClearFiltersClick(object sender, RoutedEventArgs e)
+    {
+        _filter.Clear();
+        SearchBox.Text = ""; // also refreshes
+        RefreshFilter();
     }
 
     // --- Settings -----------------------------------------------------------------------------
@@ -391,7 +542,7 @@ public partial class MainWindow : Window
             $"The current transcript ({_session.Entries.Count} captions) hasn't been saved. Save it now?",
             Title, MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
         if (answer == MessageBoxResult.Cancel) return false;
-        if (answer == MessageBoxResult.Yes) return SaveAll() != null;
+        if (answer == MessageBoxResult.Yes) return SaveAll(useFilter: false) != null;
         return true;
     }
 
