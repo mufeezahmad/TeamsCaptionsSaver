@@ -26,6 +26,8 @@ service. Everything stays on your PC.
 
 - 🎙️ **Real speaker names.** Each line shows who said it, taken directly from Teams.
 - ⚡ **Live view.** Captions appear in the app as people speak and are corrected in place while the sentence is still being finished.
+- 🗣️ **One paragraph per speaker.** Teams splits speech into many short captions; the app joins them back together, so each name and time appears once until someone else speaks.
+- 📋 **Copy all.** One click copies the whole transcript, ready to paste into an email, notes or an AI tool.
 - 🤖 **Hands-free.** Detects when you join a meeting, can switch Teams captions on for you, and saves when the meeting ends.
 - 📄 **Five export formats:** plain text, Markdown, JSON, CSV (opens in Excel) and WebVTT subtitles.
 - 💾 **Crash-safe.** A backup copy is written every 15 seconds, so a crash or reboot doesn't lose the meeting.

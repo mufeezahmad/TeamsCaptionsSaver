@@ -20,7 +20,11 @@ public sealed class TranscriptSession
     public string Title { get; set; } = "Teams Meeting";
     public DateTime StartedAt { get; } = DateTime.Now;
     public DateTime? EndedAt { get; set; }
+    /// <summary>Every caption block Teams showed, in order. Exports like WebVTT use these directly.</summary>
     public ObservableCollection<CaptionEntry> Entries { get; } = [];
+
+    /// <summary>The same captions grouped by speaker: what the window shows and most exports write.</summary>
+    public ObservableCollection<SpeakerTurn> Turns { get; } = [];
 
     /// <summary>True when entries changed since the last backup.</summary>
     public bool IsDirty { get; set; }
@@ -33,7 +37,7 @@ public sealed class TranscriptSession
         _resolveAlias = resolveAlias;
     }
 
-    public IEnumerable<string> Speakers => Entries.Select(e => e.Speaker).Distinct();
+    public IEnumerable<string> Speakers => Turns.Select(t => t.Speaker).Distinct();
 
     public void Merge(IReadOnlyList<ParsedCaption> captions)
     {
@@ -83,6 +87,7 @@ public sealed class TranscriptSession
             };
             _byKey[caption.Key] = entry;
             Entries.Add(entry);
+            AddToTurns(entry);
             MarkChanged();
         }
     }
@@ -90,7 +95,19 @@ public sealed class TranscriptSession
     public void ApplyAliases()
     {
         foreach (var e in Entries) e.Speaker = _resolveAlias(e.RawSpeaker);
+        // Renaming can make neighbouring turns belong to the same person (or split them), so regroup.
+        foreach (var t in Turns) t.Detach();
+        Turns.Clear();
+        foreach (var e in Entries) AddToTurns(e);
         MarkChanged();
+    }
+
+    private void AddToTurns(CaptionEntry entry)
+    {
+        if (Turns.Count > 0 && Turns[^1].Speaker == entry.Speaker)
+            Turns[^1].Add(entry);
+        else
+            Turns.Add(new SpeakerTurn(entry));
     }
 
     private void MarkChanged()

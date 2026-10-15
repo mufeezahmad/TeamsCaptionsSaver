@@ -47,7 +47,7 @@ public partial class MainWindow : Window
     private TranscriptSession NewSession()
     {
         var session = new TranscriptSession(ResolveAlias);
-        TranscriptGrid.ItemsSource = session.Entries;
+        TranscriptGrid.ItemsSource = session.Turns;
         _sessionEnded = false;
         return session;
     }
@@ -72,10 +72,12 @@ public partial class MainWindow : Window
 
         if (!_paused && snap.Captions.Count > 0)
         {
-            int before = _session.Entries.Count;
+            var before = (_session.Turns.Count, _session.Turns.LastOrDefault()?.Text);
             _session.Merge(snap.Captions);
-            if (_settings.AutoScroll && _session.Entries.Count > before)
-                TranscriptGrid.ScrollIntoView(_session.Entries[^1]);
+            // The last turn keeps growing while the same person talks, so follow the bottom of the
+            // grid rather than just the last row.
+            if (_settings.AutoScroll && before != (_session.Turns.Count, _session.Turns.LastOrDefault()?.Text))
+                FindChild<ScrollViewer>(TranscriptGrid)?.ScrollToEnd();
         }
 
         UpdateStatus(snap);
@@ -273,25 +275,66 @@ public partial class MainWindow : Window
 
     private void OnRenameSpeakerClick(object sender, RoutedEventArgs e)
     {
-        if (TranscriptGrid.SelectedItem is not CaptionEntry entry) return;
-        var newName = RenameDialog.Ask(this, entry.RawSpeaker, entry.Speaker);
+        if (TranscriptGrid.SelectedItem is not SpeakerTurn turn) return;
+        var newName = RenameDialog.Ask(this, turn.RawSpeaker, turn.Speaker);
         if (newName == null) return;
 
-        if (newName.Length == 0 || newName == entry.RawSpeaker)
-            _settings.SpeakerAliases.Remove(entry.RawSpeaker);
+        if (newName.Length == 0 || newName == turn.RawSpeaker)
+            _settings.SpeakerAliases.Remove(turn.RawSpeaker);
         else
-            _settings.SpeakerAliases[entry.RawSpeaker] = newName;
+            _settings.SpeakerAliases[turn.RawSpeaker] = newName;
         _settings.Save();
         _session.ApplyAliases();
     }
 
     private void OnCopyClick(object sender, RoutedEventArgs e)
     {
-        var lines = TranscriptGrid.SelectedItems.Cast<CaptionEntry>()
-            .OrderBy(x => _session.Entries.IndexOf(x))
-            .Select(x => $"[{x.TimeDisplay}] {x.Speaker}: {x.Text}");
-        var text = string.Join(Environment.NewLine, lines);
-        if (text.Length > 0) Clipboard.SetText(text);
+        var lines = TranscriptGrid.SelectedItems.Cast<SpeakerTurn>()
+            .OrderBy(t => _session.Turns.IndexOf(t))
+            .Select(TranscriptExporter.FormatTurn);
+        CopyToClipboard(string.Join(Environment.NewLine + Environment.NewLine, lines));
+    }
+
+    private void OnCopyAllClick(object sender, RoutedEventArgs e)
+    {
+        if (!EnsureHasEntries()) return;
+        if (CopyToClipboard(TranscriptExporter.ToText(_session)))
+            Log.Write($"Copied the whole transcript ({_session.Turns.Count} turns) to the clipboard.");
+    }
+
+    private bool CopyToClipboard(string text)
+    {
+        if (text.Length == 0) return false;
+        // Another app can hold the clipboard open for a moment; retry briefly before giving up.
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                Clipboard.SetText(text);
+                return true;
+            }
+            catch (System.Runtime.InteropServices.COMException) when (attempt < 5)
+            {
+                Thread.Sleep(50);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Couldn't copy to the clipboard:\n{ex.Message}", Title,
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+        }
+    }
+
+    private static T? FindChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) return match;
+            if (FindChild<T>(child) is { } found) return found;
+        }
+        return null;
     }
 
     // --- Settings -----------------------------------------------------------------------------

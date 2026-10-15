@@ -28,6 +28,8 @@
         <!-- Actions -->
         <WrapPanel Grid.Row="1" Margin="0,0,0,10">
             <Button x:Name="PauseButton" Content="Pause capture" Click="OnPauseClick" />
+            <Button Content="Copy all" Click="OnCopyAllClick"
+                    ToolTip="Copy the whole transcript to the clipboard, ready to paste anywhere." />
             <Button Content="Save as…" Click="OnSaveAsClick" />
             <Button Content="Save (selected formats)" Click="OnSaveAllClick" />
             <Button Content="New transcript" Click="OnNewSessionClick" />
@@ -63,7 +65,7 @@
             <DataGrid.ContextMenu>
                 <ContextMenu>
                     <MenuItem Header="Rename speaker…" Click="OnRenameSpeakerClick" />
-                    <MenuItem Header="Copy" Click="OnCopyClick" />
+                    <MenuItem Header="Copy selected" Click="OnCopyClick" />
                 </ContextMenu>
             </DataGrid.ContextMenu>
         </DataGrid>

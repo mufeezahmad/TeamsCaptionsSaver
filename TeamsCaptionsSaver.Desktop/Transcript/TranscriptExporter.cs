@@ -80,11 +80,13 @@ public static class TranscriptExporter
     public static string ToText(TranscriptSession s)
     {
         var sb = new StringBuilder(Header(s));
-        sb.AppendLine();
-        foreach (var e in s.Entries)
-            sb.AppendLine($"[{e.TimeDisplay}] {e.Speaker}: {e.Text}");
+        foreach (var t in s.Turns)
+            sb.AppendLine().AppendLine(FormatTurn(t));
         return sb.ToString();
     }
+
+    /// <summary>One speaker turn as a plain-text line: "[17:50:50] Jonas: what they said".</summary>
+    public static string FormatTurn(SpeakerTurn t) => $"[{t.TimeDisplay}] {t.Speaker}: {t.Text}";
 
     public static string ToMarkdown(TranscriptSession s)
     {
@@ -98,23 +100,12 @@ public static class TranscriptExporter
         sb.AppendLine("## Transcript");
         sb.AppendLine();
 
-        // Group consecutive captions from the same speaker into one paragraph.
-        string? lastSpeaker = null;
-        foreach (var e in s.Entries)
+        foreach (var t in s.Turns)
         {
-            if (e.Speaker != lastSpeaker)
-            {
-                if (lastSpeaker != null) sb.AppendLine().AppendLine();
-                sb.Append($"**{e.Speaker}** _{e.TimeDisplay}_  ").AppendLine();
-                sb.Append(e.Text);
-                lastSpeaker = e.Speaker;
-            }
-            else
-            {
-                sb.Append(' ').Append(e.Text);
-            }
+            sb.AppendLine($"**{t.Speaker}** _{t.TimeDisplay}_  ");
+            sb.AppendLine(t.Text);
+            sb.AppendLine();
         }
-        sb.AppendLine();
         return sb.ToString();
     }
 
@@ -124,23 +115,27 @@ public static class TranscriptExporter
         startedAt = s.StartedAt,
         endedAt = s.EndedAt,
         speakers = s.Speakers.ToList(),
-        captions = s.Entries.Select(e => new
+        turns = s.Turns.Select(t => new
         {
-            speaker = e.Speaker,
-            originalSpeaker = e.RawSpeaker != e.Speaker ? e.RawSpeaker : null,
-            text = e.Text,
-            time = e.FirstSeen,
-            offsetSeconds = Math.Round((e.FirstSeen - s.StartedAt).TotalSeconds, 1),
+            speaker = t.Speaker,
+            originalSpeaker = t.RawSpeaker != t.Speaker ? t.RawSpeaker : null,
+            start = t.StartTime,
+            end = t.EndTime,
+            offsetSeconds = Math.Round((t.StartTime - s.StartedAt).TotalSeconds, 1),
+            text = t.Text,
+            // The individual caption blocks, for anyone who needs finer timing.
+            captions = t.Entries.Select(e => new { time = e.FirstSeen, text = e.Text }),
         }),
     }, JsonOptions);
 
     public static string ToCsv(TranscriptSession s)
     {
         static string Q(string v) => "\"" + v.Replace("\"", "\"\"") + "\"";
-        var sb = new StringBuilder("Time,Speaker,Text\r\n");
-        foreach (var e in s.Entries)
-            sb.Append(Q(e.FirstSeen.ToString("yyyy-MM-dd HH:mm:ss"))).Append(',')
-              .Append(Q(e.Speaker)).Append(',').Append(Q(e.Text)).Append("\r\n");
+        var sb = new StringBuilder("Start,End,Speaker,Text\r\n");
+        foreach (var t in s.Turns)
+            sb.Append(Q(t.StartTime.ToString("yyyy-MM-dd HH:mm:ss"))).Append(',')
+              .Append(Q(t.EndTime.ToString("yyyy-MM-dd HH:mm:ss"))).Append(',')
+              .Append(Q(t.Speaker)).Append(',').Append(Q(t.Text)).Append("\r\n");
         return sb.ToString();
     }
 

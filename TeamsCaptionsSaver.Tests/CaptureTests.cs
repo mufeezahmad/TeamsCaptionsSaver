@@ -193,4 +193,63 @@ public class CaptureTests
         Assert.Equal("Weekly sync", TranscriptExporter.BuildFileName("{title}", s));
         Assert.Equal("a_b", TranscriptExporter.BuildFileName("a/b", s));
     }
+
+    [Fact]
+    public void Consecutive_captions_from_one_speaker_form_a_single_turn()
+    {
+        var s = Session();
+        s.Merge([
+            new ParsedCaption("c1", "Bob", "It makes life a bit more complicated."),
+            new ParsedCaption("c2", "Bob", "Um..."),
+            new ParsedCaption("c3", "Bob", "Any comments on that?"),
+            new ParsedCaption("c4", "Jane Doe", "I think it's a good idea."),
+            new ParsedCaption("c5", "Bob", "Great."),
+        ]);
+
+        Assert.Equal(5, s.Entries.Count);
+        Assert.Equal(3, s.Turns.Count);
+        Assert.Equal("Bob", s.Turns[0].Speaker);
+        Assert.Equal("It makes life a bit more complicated. Um... Any comments on that?", s.Turns[0].Text);
+        Assert.Equal(s.Entries[0].FirstSeen, s.Turns[0].StartTime);
+
+        // Each speaker name and time appears once per turn in the text export.
+        var text = TranscriptExporter.ToText(s);
+        Assert.Contains("Bob: It makes life a bit more complicated. Um... Any comments on that?", text);
+        Assert.Equal(2, text.Split("] Bob:").Length - 1);
+
+        // Subtitles stay one cue per caption block.
+        Assert.Equal(5, TranscriptExporter.ToVtt(s).Split(" --> ").Length - 1);
+    }
+
+    [Fact]
+    public void Turn_text_follows_live_caption_updates()
+    {
+        var s = Session();
+        s.Merge([new ParsedCaption("c1", "Bob", "So if you have"), new ParsedCaption("c2", "Bob", "this")]);
+        var changed = new List<string?>();
+        s.Turns[0].PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        s.Merge([new ParsedCaption("c1", "Bob", "So if you have this perspective,"), new ParsedCaption("c2", "Bob", "this here")]);
+
+        Assert.Equal("So if you have this perspective, this here", s.Turns[0].Text);
+        Assert.Contains(nameof(SpeakerTurn.Text), changed);
+    }
+
+    [Fact]
+    public void Renaming_a_speaker_regroups_turns()
+    {
+        var aliases = new Dictionary<string, string>();
+        var s = new TranscriptSession(n => aliases.TryGetValue(n, out var a) ? a : n);
+        s.Merge([
+            new ParsedCaption("c1", "Conference Room", "Can everyone hear us?"),
+            new ParsedCaption("c2", "Jane Doe", "Yes, loud and clear."),
+        ]);
+        Assert.Equal(2, s.Turns.Count);
+
+        aliases["Conference Room"] = "Jane Doe";
+        s.ApplyAliases();
+
+        var turn = Assert.Single(s.Turns);
+        Assert.Equal("Can everyone hear us? Yes, loud and clear.", turn.Text);
+    }
 }
