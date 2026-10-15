@@ -110,7 +110,8 @@ public sealed class TranscriptSession
             Turns.Add(new SpeakerTurn(entry));
     }
 
-    private void MarkChanged()
+    /// <summary>Records that the transcript changed (new captions, or the user starred or highlighted something).</summary>
+    public void MarkChanged()
     {
         IsDirty = true;
         HasUnsavedChanges = true;

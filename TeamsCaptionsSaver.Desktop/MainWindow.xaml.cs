@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private bool _paused;
     private bool _meetingActive;
     private int _notInMeetingCount;
+    private bool _demoMode;
 
     public MainWindow()
     {
@@ -40,9 +41,19 @@ public partial class MainWindow : Window
         LoadSettingsIntoUi();
 
         Log.MessageLogged += line => Dispatcher.BeginInvoke(() => LogLine.Text = line);
-        _reader.AutoEnableCaptions = _settings.AutoEnableCaptions;
-        _reader.SnapshotTaken += snapshot => Dispatcher.BeginInvoke(() => OnSnapshot(snapshot));
-        _reader.Start();
+
+        // "--demo" shows made-up captions without connecting to Teams (for trying the UI and screenshots).
+        if (Environment.GetCommandLineArgs().Contains("--demo", StringComparer.OrdinalIgnoreCase))
+        {
+            _demoMode = true;
+            LoadDemoTranscript();
+        }
+        else
+        {
+            _reader.AutoEnableCaptions = _settings.AutoEnableCaptions;
+            _reader.SnapshotTaken += snapshot => Dispatcher.BeginInvoke(() => OnSnapshot(snapshot));
+            _reader.Start();
+        }
 
         _backupTimer.Tick += (_, _) => WriteBackup();
         _backupTimer.Start();
@@ -59,13 +70,34 @@ public partial class MainWindow : Window
         _view.IsLiveFiltering = true;
         _view.LiveFilteringProperties.Add(nameof(SpeakerTurn.Text));
         _view.LiveFilteringProperties.Add(nameof(SpeakerTurn.Speaker));
+        _view.LiveFilteringProperties.Add(nameof(SpeakerTurn.IsMarked));
 
         // A new meeting has different speakers, so start unfiltered.
         _filter.Clear();
         SearchBox.Text = "";
+        MarkedOnlyBox.IsChecked = false;
 
         _sessionEnded = false;
         return session;
+    }
+
+    private void LoadDemoTranscript()
+    {
+        _session.Title = "Demo: Weekly sync";
+        _session.Merge([
+            new ParsedCaption("d1", "Alex Johnson", "Morning everyone, let's start with the release checklist."),
+            new ParsedCaption("d2", "Alex Johnson", "We still have two open bugs from last week."),
+            new ParsedCaption("d3", "Sam Lee", "The login bug is fixed, I merged it yesterday evening."),
+            new ParsedCaption("d4", "Priya Patel", "I'll take the export bug. Should be done by Thursday."),
+            new ParsedCaption("d5", "Alex Johnson", "Great. Then the deadline for the release stays Friday."),
+            new ParsedCaption("d6", "Sam Lee", "Sounds good. I'll update the release notes today."),
+        ]);
+        _session.HasUnsavedChanges = false;
+        _session.IsDirty = false; // don't write demo data to the backups
+        StatusText.Text = "Demo mode";
+        StatusDetail.Text = "Made-up captions to try the app. Not connected to Teams.";
+        StatusDot.Fill = Brushes.SteelBlue;
+        CountText.Text = $"{_session.Entries.Count} captions · {_session.Speakers.Count()} speakers";
     }
 
     private string ResolveAlias(string speaker) =>
@@ -185,7 +217,7 @@ public partial class MainWindow : Window
     /// <summary>Crash protection: keeps a JSON copy of the live transcript in %LOCALAPPDATA%.</summary>
     private void WriteBackup()
     {
-        if (!_session.IsDirty || _session.Entries.Count == 0) return;
+        if (_demoMode || !_session.IsDirty || _session.Entries.Count == 0) return;
         try
         {
             Directory.CreateDirectory(BackupFolder);
@@ -404,6 +436,7 @@ public partial class MainWindow : Window
         var parts = new List<string> { $"Showing {shown} of {_session.Turns.Count} turns" };
         if (_filter.SearchText.Trim().Length > 0) parts.Add($"{shown} match{(shown == 1 ? "" : "es")}");
         if (_filter.HiddenSpeakers.Count > 0) parts.Add($"{visibleSpeakers} of {allSpeakers.Count} speakers");
+        if (_filter.MarkedOnly) parts.Add("★ / highlighted only");
         FilterStatus.Text = string.Join(" · ", parts) + " — Copy all and Save use what's shown";
     }
 
@@ -413,6 +446,11 @@ public partial class MainWindow : Window
         {
             SearchBox.Focus();
             SearchBox.SelectAll();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.B && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            ToggleBookmarks(TranscriptGrid.SelectedItems.Cast<SpeakerTurn>().ToList());
             e.Handled = true;
         }
     }
@@ -485,7 +523,97 @@ public partial class MainWindow : Window
     {
         _filter.Clear();
         SearchBox.Text = ""; // also refreshes
+        MarkedOnlyBox.IsChecked = false;
         RefreshFilter();
+    }
+
+    private void OnMarkedOnlyChanged(object sender, RoutedEventArgs e)
+    {
+        _filter.MarkedOnly = MarkedOnlyBox.IsChecked == true;
+        RefreshFilter();
+    }
+
+    // --- Bookmarks and highlights -------------------------------------------------------------
+
+    private SpeakerTurn? _detailTurn;
+
+    /// <summary>Stars the given turns, or un-stars them if they're all starred already.</summary>
+    private void ToggleBookmarks(IReadOnlyList<SpeakerTurn> turns)
+    {
+        if (turns.Count == 0) return;
+        bool star = turns.Any(t => !t.IsBookmarked);
+        foreach (var t in turns) t.IsBookmarked = star;
+        _session.MarkChanged();
+        Log.Write(star ? $"Bookmarked {turns.Count} line(s)." : $"Removed {turns.Count} bookmark(s).");
+    }
+
+    private void OnStarClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is SpeakerTurn turn) ToggleBookmarks([turn]);
+    }
+
+    private void OnToggleBookmarkClick(object sender, RoutedEventArgs e) =>
+        ToggleBookmarks(TranscriptGrid.SelectedItems.Cast<SpeakerTurn>().ToList());
+
+    private void OnDetailStarClick(object sender, RoutedEventArgs e)
+    {
+        if (_detailTurn != null) ToggleBookmarks([_detailTurn]);
+    }
+
+    /// <summary>Shows the detail pane for a single selected row, where words can be highlighted.</summary>
+    private void OnGridSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var turn = TranscriptGrid.SelectedItems.Count == 1 ? TranscriptGrid.SelectedItem as SpeakerTurn : null;
+        if (turn == _detailTurn) return;
+
+        if (_detailTurn != null) _detailTurn.PropertyChanged -= OnDetailTurnChanged;
+        _detailTurn = turn;
+        if (turn != null) turn.PropertyChanged += OnDetailTurnChanged;
+
+        DetailPane.Visibility = turn == null ? Visibility.Collapsed : Visibility.Visible;
+        RefreshDetail(updateText: true);
+    }
+
+    private void OnDetailTurnChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        // While the speaker is still talking the text keeps growing; don't wipe out words the
+        // user is in the middle of selecting.
+        bool textChanged = e.PropertyName == nameof(SpeakerTurn.Text);
+        RefreshDetail(updateText: textChanged && DetailText.SelectionLength == 0);
+    }
+
+    private void RefreshDetail(bool updateText)
+    {
+        if (_detailTurn == null) return;
+        DetailHeader.Text = $"{_detailTurn.Speaker} · {_detailTurn.TimeDisplay}";
+        DetailStarButton.Content = _detailTurn.IsBookmarked ? "★ Bookmarked" : "☆ Bookmark";
+        if (updateText) DetailText.Text = _detailTurn.Text;
+    }
+
+    private void OnHighlightClick(object sender, RoutedEventArgs e)
+    {
+        if (_detailTurn == null) return;
+        var phrase = DetailText.SelectedText.Trim();
+        if (phrase.Length == 0)
+        {
+            MessageBox.Show(this, "Select some words in the box first, then click Highlight.", Title,
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        _detailTurn.AddHighlight(phrase);
+        _session.MarkChanged();
+        DetailText.Select(DetailText.SelectionStart + DetailText.SelectionLength, 0);
+        RefreshDetail(updateText: true);
+        Log.Write($"Highlighted “{phrase}”.");
+    }
+
+    private void OnRemoveHighlightClick(object sender, RoutedEventArgs e)
+    {
+        if (_detailTurn == null) return;
+        _detailTurn.RemoveHighlights(DetailText.SelectionStart, DetailText.SelectionLength, DetailText.Text);
+        _session.MarkChanged();
+        DetailText.Select(DetailText.SelectionStart, 0);
+        RefreshDetail(updateText: true);
     }
 
     // --- Settings -----------------------------------------------------------------------------
@@ -537,7 +665,7 @@ public partial class MainWindow : Window
 
     private bool ConfirmDiscardUnsaved()
     {
-        if (!_session.HasUnsavedChanges || _session.Entries.Count == 0) return true;
+        if (_demoMode || !_session.HasUnsavedChanges || _session.Entries.Count == 0) return true;
         var answer = MessageBox.Show(this,
             $"The current transcript ({_session.Entries.Count} captions) hasn't been saved. Save it now?",
             Title, MessageBoxButton.YesNoCancel, MessageBoxImage.Question);

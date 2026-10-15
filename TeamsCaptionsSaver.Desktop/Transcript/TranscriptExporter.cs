@@ -98,13 +98,33 @@ public static class TranscriptExporter
     {
         turns ??= s.Turns;
         var sb = new StringBuilder(Header(s, turns));
+
+        var marked = turns.Where(t => t.IsMarked).ToList();
+        if (marked.Count > 0)
+        {
+            sb.AppendLine().AppendLine("Highlights:");
+            foreach (var t in marked)
+                sb.AppendLine(t.IsBookmarked
+                    ? $"⭐ [{t.TimeDisplay}] {t.Speaker}: {MarkText(t)}"
+                    : $"🖍 [{t.TimeDisplay}] {t.Speaker}: {string.Join(" · ", t.Highlights.Select(Quote))}");
+            sb.AppendLine().Append("Transcript:").AppendLine();
+        }
+
         foreach (var t in turns)
             sb.AppendLine().AppendLine(FormatTurn(t));
         return sb.ToString();
     }
 
-    /// <summary>One speaker turn as a plain-text line: "[17:50:50] Jonas: what they said".</summary>
-    public static string FormatTurn(SpeakerTurn t) => $"[{t.TimeDisplay}] {t.Speaker}: {t.Text}";
+    /// <summary>
+    /// One speaker turn as a plain-text line: "[17:50:50] Jonas: what they said", with a ⭐ in front
+    /// when starred and [[highlighted words]] marked.
+    /// </summary>
+    public static string FormatTurn(SpeakerTurn t) =>
+        $"{(t.IsBookmarked ? "⭐ " : "")}[{t.TimeDisplay}] {t.Speaker}: {MarkText(t)}";
+
+    private static string MarkText(SpeakerTurn t) => HighlightRanges.Mark(t.Text, t.Highlights, "[[", "]]");
+
+    private static string Quote(string phrase) => $"“{phrase}”";
 
     public static string ToMarkdown(TranscriptSession s, IReadOnlyList<SpeakerTurn>? turns = null)
     {
@@ -117,17 +137,32 @@ public static class TranscriptExporter
         sb.AppendLine($"- **Speakers:** {string.Join(", ", SpeakersOf(turns))}");
         if (IsFiltered(s, turns)) sb.AppendLine($"- **Filtered:** {turns.Count} of {s.Turns.Count} turns");
         sb.AppendLine();
+
+        var marked = turns.Where(t => t.IsMarked).ToList();
+        if (marked.Count > 0)
+        {
+            sb.AppendLine("## Highlights");
+            sb.AppendLine();
+            foreach (var t in marked)
+                sb.AppendLine(t.IsBookmarked
+                    ? $"- ⭐ **{t.Speaker}** _{t.TimeDisplay}_: {MarkMarkdown(t)}"
+                    : $"- 🖍 **{t.Speaker}** _{t.TimeDisplay}_: {string.Join(" · ", t.Highlights.Select(Quote))}");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## Transcript");
         sb.AppendLine();
 
         foreach (var t in turns)
         {
-            sb.AppendLine($"**{t.Speaker}** _{t.TimeDisplay}_  ");
-            sb.AppendLine(t.Text);
+            sb.AppendLine($"**{t.Speaker}** _{t.TimeDisplay}_{(t.IsBookmarked ? " ⭐" : "")}  ");
+            sb.AppendLine(MarkMarkdown(t));
             sb.AppendLine();
         }
         return sb.ToString();
     }
+
+    private static string MarkMarkdown(SpeakerTurn t) => HighlightRanges.Mark(t.Text, t.Highlights, "**", "**");
 
     public static string ToJson(TranscriptSession s, IReadOnlyList<SpeakerTurn>? turns = null)
     {
@@ -147,6 +182,8 @@ public static class TranscriptExporter
                 end = t.EndTime,
                 offsetSeconds = Math.Round((t.StartTime - s.StartedAt).TotalSeconds, 1),
                 text = t.Text,
+                bookmarked = t.IsBookmarked,
+                highlights = t.Highlights,
                 // The individual caption blocks, for anyone who needs finer timing.
                 captions = t.Entries.Select(e => new { time = e.FirstSeen, text = e.Text }),
             }),
@@ -156,11 +193,13 @@ public static class TranscriptExporter
     public static string ToCsv(TranscriptSession s, IReadOnlyList<SpeakerTurn>? turns = null)
     {
         static string Q(string v) => "\"" + v.Replace("\"", "\"\"") + "\"";
-        var sb = new StringBuilder("Start,End,Speaker,Text\r\n");
+        var sb = new StringBuilder("Start,End,Speaker,Text,Bookmarked,Highlights\r\n");
         foreach (var t in turns ?? s.Turns)
             sb.Append(Q(t.StartTime.ToString("yyyy-MM-dd HH:mm:ss"))).Append(',')
               .Append(Q(t.EndTime.ToString("yyyy-MM-dd HH:mm:ss"))).Append(',')
-              .Append(Q(t.Speaker)).Append(',').Append(Q(t.Text)).Append("\r\n");
+              .Append(Q(t.Speaker)).Append(',').Append(Q(t.Text)).Append(',')
+              .Append(t.IsBookmarked ? "yes" : "").Append(',')
+              .Append(Q(string.Join("; ", t.Highlights))).Append("\r\n");
         return sb.ToString();
     }
 

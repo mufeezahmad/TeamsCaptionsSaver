@@ -3,9 +3,9 @@ using TeamsCaptionsSaver.Desktop.Models;
 namespace TeamsCaptionsSaver.Desktop.Transcript;
 
 /// <summary>
-/// Which speaker turns the window shows: chosen speakers plus a text search.
-/// Speakers are tracked as <em>hidden</em> rather than shown, so anyone who starts talking
-/// mid-meeting appears automatically.
+/// Which speaker turns the window shows: chosen speakers, a text search, and optionally only
+/// starred or highlighted turns. Speakers are tracked as <em>hidden</em> rather than shown, so
+/// anyone who starts talking mid-meeting appears automatically.
 /// </summary>
 public sealed class TranscriptFilter
 {
@@ -13,11 +13,15 @@ public sealed class TranscriptFilter
 
     public string SearchText { get; set; } = "";
 
-    public bool IsActive => HiddenSpeakers.Count > 0 || SearchText.Trim().Length > 0;
+    /// <summary>Show only turns that are starred or have highlighted words.</summary>
+    public bool MarkedOnly { get; set; }
+
+    public bool IsActive => HiddenSpeakers.Count > 0 || SearchText.Trim().Length > 0 || MarkedOnly;
 
     public bool Matches(SpeakerTurn turn)
     {
         if (HiddenSpeakers.Contains(turn.Speaker)) return false;
+        if (MarkedOnly && !turn.IsMarked) return false;
         var search = SearchText.Trim();
         return search.Length == 0 ||
                turn.Text.Contains(search, StringComparison.CurrentCultureIgnoreCase) ||
@@ -41,5 +45,6 @@ public sealed class TranscriptFilter
     {
         HiddenSpeakers.Clear();
         SearchText = "";
+        MarkedOnly = false;
     }
 }

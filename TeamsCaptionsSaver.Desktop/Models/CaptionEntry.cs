@@ -36,6 +36,37 @@ public sealed class CaptionEntry : INotifyPropertyChanged
 
     public string TimeDisplay => FirstSeen.ToString("HH:mm:ss");
 
+    // Bookmarks and highlights live on the caption, not on the speaker turn: turns are rebuilt
+    // when speakers are renamed, captions keep their identity.
+    private bool _isBookmarked;
+    private readonly List<string> _highlights = [];
+
+    public bool IsBookmarked
+    {
+        get => _isBookmarked;
+        set => Set(ref _isBookmarked, value);
+    }
+
+    /// <summary>
+    /// Highlighted phrases. Stored as text rather than character positions, so they stay attached
+    /// while Teams is still rewriting the caption.
+    /// </summary>
+    public IReadOnlyList<string> Highlights => _highlights;
+
+    public void AddHighlight(string phrase)
+    {
+        if (phrase.Length == 0 || _highlights.Contains(phrase, StringComparer.OrdinalIgnoreCase)) return;
+        _highlights.Add(phrase);
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Highlights)));
+    }
+
+    public bool RemoveHighlights(Func<string, bool> predicate)
+    {
+        if (_highlights.RemoveAll(new Predicate<string>(predicate)) == 0) return false;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Highlights)));
+        return true;
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private void Set<T>(ref T field, T value, [CallerMemberName] string? name = null)
