@@ -156,8 +156,11 @@
                         <Button x:Name="DetailStarButton" Content="★ Bookmark" Click="OnDetailStarClick" />
                         <Button Content="🖍 Highlight" Click="OnHighlightClick"
                                 ToolTip="Highlight the words selected below" />
-                        <Button Content="Remove highlight" Margin="0" Click="OnRemoveHighlightClick"
+                        <Button Content="Remove highlight" Click="OnRemoveHighlightClick"
                                 ToolTip="Remove highlights in the selected words (or all in this line if nothing is selected)" />
+                        <Button x:Name="DetailCloseButton" Content="✕" Click="OnCloseDetailClick" ToolTip="Close (Esc)"
+                                MinWidth="0" Width="28" Height="26" Padding="0" Margin="4,0,0,0" FontSize="13"
+                                Background="Transparent" BorderThickness="0" Foreground="#555" Cursor="Hand" />
                     </StackPanel>
                     <TextBlock x:Name="DetailHeader" FontWeight="SemiBold" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis" />

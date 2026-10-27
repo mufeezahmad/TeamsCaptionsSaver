@@ -453,6 +453,11 @@ public partial class MainWindow : Window
             ToggleBookmarks(TranscriptGrid.SelectedItems.Cast<SpeakerTurn>().ToList());
             e.Handled = true;
         }
+        else if (e.Key == Key.Escape && DetailPane.IsVisible && !SearchBox.IsKeyboardFocused)
+        {
+            CloseDetail();
+            e.Handled = true;
+        }
     }
 
     private void OnSearchChanged(object sender, TextChangedEventArgs e)
@@ -573,6 +578,9 @@ public partial class MainWindow : Window
         DetailPane.Visibility = turn == null ? Visibility.Collapsed : Visibility.Visible;
         RefreshDetail(updateText: true);
     }
+
+    private void OnCloseDetailClick(object sender, RoutedEventArgs e) => CloseDetail();
+    private void CloseDetail() => TranscriptGrid.UnselectAll();
 
     private void OnDetailTurnChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
