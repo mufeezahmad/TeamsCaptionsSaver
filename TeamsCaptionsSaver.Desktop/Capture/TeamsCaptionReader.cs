@@ -25,6 +25,7 @@ public sealed class TeamsCaptionReader : IDisposable
     private const string MoreButtonId = "callingButtons-showMoreBtn";
     private const string LanguageSpeechMenuId = "LanguageSpeechMenuControl-id";
     private const string CaptionsMenuItemId = "closed-captions-button";
+    private const string CaptionsPanelDismissId = "captions-panel-dismiss-button";
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(1000);
     private static readonly TimeSpan WindowRefreshInterval = TimeSpan.FromSeconds(3);
@@ -338,34 +339,104 @@ public sealed class TeamsCaptionReader : IDisposable
         try
         {
             var doc = _meetingDocument;
-            var more = FindById(doc, MoreButtonId);
-            if (more == null) { Log.Write("Auto-enable: 'More' button not found."); return; }
-            Activate(more);
 
-            var language = FindById(doc, LanguageSpeechMenuId, waitForIt: true);
-            if (language == null) { Log.Write("Auto-enable: 'Language and speech' not found."); CloseMenu(more); return; }
-            Activate(language);
-
-            // "Show live captions" is a checkbox in current Teams (older builds: "Turn on/off live captions").
-            // Never toggle it blindly - a second attempt would turn the captions back off.
-            var captions = FindById(doc, CaptionsMenuItemId, waitForIt: true);
-            if (captions == null) { Log.Write("Auto-enable: 'Show live captions' not found."); CloseMenu(more); return; }
-            if (IsCaptionsOn(captions))
+            if (IsCaptionsPanelVisible(doc))
             {
-                Log.Write($"Auto-enable: live captions are already on ('{captions.Current.Name}').");
+                Log.Write("Auto-enable: live captions are already on.");
                 _autoEnableAttempts = MaxAutoEnableAttempts;
-                CloseMenu(more);
+                _lastFullScan = DateTime.MinValue;
                 return;
             }
-            Activate(captions);
-            Thread.Sleep(500);
-            CloseMenu(more);
-            Log.Write($"Auto-enable: turned on '{captions.Current.Name}'.");
-            _lastFullScan = DateTime.MinValue; // look for the captions region right away
+
+            if (TryToolbarCaptionsButton(doc) || TryMoreMenu(doc))
+            {
+                _autoEnableAttempts = MaxAutoEnableAttempts;
+                _lastFullScan = DateTime.MinValue; // look for the captions region right away
+            }
         }
         catch (Exception ex)
         {
             Log.Write($"Auto-enable failed: {ex.GetType().Name} {ex.Message}");
+        }
+    }
+
+    private bool TryToolbarCaptionsButton(AutomationElement doc)
+    {
+        var button = FindById(doc, CaptionsMenuItemId);
+        if (button == null || button.Current.ControlType != ControlType.Button) return false;
+
+        Press(button);
+        if (WaitForCaptionsPanel(doc))
+        {
+            Log.Write("Auto-enable: turned on live captions with the toolbar Captions button.");
+            return true;
+        }
+        Log.Write("Auto-enable: pressed the toolbar Captions button but no captions appeared.");
+        return false;
+    }
+
+    private bool TryMoreMenu(AutomationElement doc)
+    {
+        var more = FindById(doc, MoreButtonId);
+        if (more == null) { Log.Write("Auto-enable: 'More' button not found."); return false; }
+        try
+        {
+            Activate(more);
+
+            var language = FindById(doc, LanguageSpeechMenuId, waitForIt: true);
+            if (language == null) { Log.Write("Auto-enable: 'Language and speech' not found."); return false; }
+            Activate(language);
+
+            var captions = FindById(doc, CaptionsMenuItemId, waitForIt: true);
+            if (captions == null) { Log.Write("Auto-enable: 'Show live captions' not found."); return false; }
+            if (IsCaptionsOn(captions))
+            {
+                Log.Write($"Auto-enable: live captions are already on ('{captions.Current.Name}').");
+                return true;
+            }
+            Activate(captions);
+            Log.Write($"Auto-enable: turned on '{captions.Current.Name}'.");
+            return true;
+        }
+        finally
+        {
+            Thread.Sleep(300);
+            CloseMenu(more);
+        }
+    }
+
+    private static bool IsCaptionsPanelVisible(AutomationElement doc) =>
+        FindById(doc, CaptionsPanelDismissId) != null ||
+        doc.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "Live Captions")) != null;
+
+    private static bool WaitForCaptionsPanel(AutomationElement doc)
+    {
+        for (int i = 0; i < 20; i++)
+        {
+            if (IsCaptionsPanelVisible(doc)) return true;
+            Thread.Sleep(200);
+        }
+        return false;
+    }
+
+    private static void Press(AutomationElement e)
+    {
+        if (e.TryGetCurrentPattern(InvokePattern.Pattern, out var inv))
+        {
+            ((InvokePattern)inv).Invoke();
+        }
+        else if (e.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var ec))
+        {
+            try { ((ExpandCollapsePattern)ec).Expand(); }
+            catch (InvalidOperationException) { }
+        }
+        else if (e.TryGetCurrentPattern(TogglePattern.Pattern, out var tg))
+        {
+            ((TogglePattern)tg).Toggle();
+        }
+        else
+        {
+            throw new InvalidOperationException($"Element '{e.Current.Name}' can't be clicked via UI Automation.");
         }
     }
 
@@ -390,10 +461,11 @@ public sealed class TeamsCaptionReader : IDisposable
 
     private static void Activate(AutomationElement e)
     {
-        if (e.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var ec) &&
-            ((ExpandCollapsePattern)ec).Current.ExpandCollapseState == ExpandCollapseState.Collapsed)
+        if (e.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var ec))
         {
-            ((ExpandCollapsePattern)ec).Expand();
+            var pattern = (ExpandCollapsePattern)ec;
+            if (pattern.Current.ExpandCollapseState != ExpandCollapseState.Collapsed) return; // already open
+            pattern.Expand();
             return;
         }
         if (e.TryGetCurrentPattern(InvokePattern.Pattern, out var inv))
